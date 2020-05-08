@@ -14,6 +14,7 @@ samples = {}
 
 
 def main():
+    print('Make sure the target directory will not change while the program is running (e.g. no other programs will add files while this runs)')
     original_directory = os.getcwd()
     path = getpath()
     path1 = getplatemap(path)
@@ -105,8 +106,20 @@ def getplatemap(path):
                 quit()
 
 def platemapsheet1(path1):
-    wb = load_workbook(filename=path1, data_only=True)
-    ws = wb.worksheets[0]
+    tries = 0
+    while tries < 2:
+        try:
+            wb = load_workbook(filename=path1, data_only=True)
+            ws = wb.worksheets[0]
+            return ws
+        except PermissionError:
+            print('Close out of the platemap. The program will try again in 5 seconds.')
+            sleep(5)
+            tries += 1
+    if tries == 2:
+        print('Alright, clearly nothing is changing. Make sure the platemap is closed and rerun the program')
+        sleep(5)
+        quit()
     return ws
 
            
@@ -187,6 +200,7 @@ def checksamples(samples):
     for assays in assaylist:
         # adding overage to mastermix calculations
         samplecount[assays] = 0
+        # individual overages
         n = len(samples[assays])
         if n < 5:
             samplecount[assays] = n + 0.5
@@ -218,44 +232,55 @@ def MMoutput(temp, path, reagents, samplecount):
         'tRNA_Tyr_AA_1'
     ]
     current_assay = 0
+    total_zymo_mastermix = 0
+    total_qiagen_mastermix = 0
     for row in ws.iter_rows():
         columncounter = 1
-        if rowcounter % 8 == 0:
+        if (rowcounter-4)%6 == 0 and rowcounter != 4:
             for x in range(3):
                 # outputting the assay
                 ws.cell(row=rowcounter, column=columncounter).value = assaylist[current_assay]
                 # outputting the right reagent
-                ws.cell(row=(rowcounter + 2), column=columncounter).value = reagents.get(assaylist[current_assay], "Not Found")
+                ws.cell(row=(rowcounter+1), column=columncounter).value = reagents.get(assaylist[current_assay], "Not Found")
                 # note for cases where we have new primers not present in LIMS
                 if assaylist[current_assay] in noadaptorsprimers:
                     ws.cell(row=rowcounter, column=columncounter+1).value = 'Use primers without adaptors'
                 if assaylist[current_assay] in samples:
                     # sample count
-                    ws.cell(row=rowcounter, column=(columncounter + 3)).value = samplecount[assaylist[current_assay]]
-                    # primer volume
-                    ws.cell(row=(rowcounter + 5), column=(columncounter + 1)).value = 2
+                    ws.cell(row=rowcounter, column=(columncounter + 2)).value = samplecount[assaylist[current_assay]]
                 else:
                     # one last saftey net for an assay that wasn't removed in check samples for some reason
                     print("Error: {} slipped through the cracks. Is there something weird about this assay on the platemap?".format(assaylist[current_assay]))
                 # reagent volumes, dependent on reagent used
                 if reagents.get(assaylist[current_assay]) == 'ZymoTaq':
-                    ws.cell(row=(rowcounter + 3), column=columncounter).value = 'DMSO'
-                    ws.cell(row=(rowcounter + 3), column=(columncounter + 1)).value = .5
-                else:
-                    ws.cell(row=(rowcounter + 3), column=columncounter).value = None
-                    ws.cell(row=(rowcounter + 3), column=(columncounter + 1)).value = None
+                    total_zymo_mastermix += samplecount[assaylist[current_assay]]
+                elif reagents.get(assaylist[current_assay]) == 'Qiagen':
+                    total_qiagen_mastermix += samplecount[assaylist[current_assay]]
                 # a special case
                 if assaylist[current_assay] == 'ATP7B_112GA_RD_2':
-                    ws.cell(row=(rowcounter + 5), column=(columncounter + 1)).value = 3.5
+                    ws.cell(row=(rowcounter + 2), column=(columncounter + 3)).value = 'See'
+                    ws.cell(row=(rowcounter + 3), column=(columncounter + 1)).value = 'above'
+                    ws.cell(row=3, column=5).value = samplecount['ATP7B_112GA_RD_2']
                 current_assay += 1
-                columncounter += 4
+                columncounter += 3
                 if current_assay == len(assaylist):
                     break
             if current_assay == len(assaylist):
                 break
         if current_assay == len(assaylist):
             break
-        rowcounter += 1   
+        rowcounter += 1
+    # 5% overage
+    total_zymo_mastermix *= 1.05
+    total_qiagen_mastermix *= 1.05
+    one_ml_zymo_mm_tubes = total_zymo_mastermix // 125  
+    remaining_zymo_mm = total_zymo_mastermix % 125
+    one_ml_qiagen_mm_tubes = total_qiagen_mastermix // 150  
+    remaining_qiagen_mm = total_qiagen_mastermix % 150
+    ws.cell(row=3, column=8).value = remaining_qiagen_mm
+    ws.cell(row=3, column=9).value = one_ml_qiagen_mm_tubes
+    ws.cell(row=3, column=2).value = remaining_zymo_mm
+    ws.cell(row=3, column=3).value = one_ml_zymo_mm_tubes
     datestr = str(datetime.date.today()) + ' Secondary PCR Mastermixes.xlsx'
     wb.save(datestr)
     move(datestr, path)
